@@ -30,7 +30,12 @@ solver, and send outputs back. The backend stores everything and the portal show
   - `src/services/runs.ts` – run lifecycle: create, lease, submit results, finalize, cancel
   - `src/db/schema.ts` – schema; `drizzle/` – generated migrations
   - `openapi.json` – exported contract for client packages (`npm run openapi`)
-- `apps/portal` – **next to build**: Next.js (React) admin portal
+- `apps/portal` – Next.js 16 admin portal (App Router, client components + SWR, Tailwind v4)
+  - `next.config.ts` rewrites `/portal/*` → `API_URL` (beforeFiles) so the session cookie is same-origin
+  - `src/proxy.ts` (Next 16's middleware) – cookie-presence gate; `src/lib/api.ts` – fetch wrapper, 401 → `/login?next=`
+  - `src/lib/types.ts` mirrors portal API responses – update it when portal route shapes change
+  - Routes are slug-based (`/[org]/runs/[number]`, `/[org]/settings/billing`) because the API builds those URLs
+    (`/v1` run links, Stripe return URLs). Reserved org slugs live in `apps/api/src/routes/portal/auth.ts`.
 
 ## Conventions
 
@@ -46,10 +51,12 @@ solver, and send outputs back. The backend stores everything and the portal show
 - `npm run dev` – needs Postgres (`docker compose up -d db` from repo root) and `.env` (copy `.env.example`)
 - `npm run typecheck`, `npm run build`, `npm run openapi`, `npm run db:generate`
 
+## Commands (in apps/portal)
+
+- `npm run dev` (port 3000; `API_URL` defaults to http://localhost:4000), `npm run build`, `npm run typecheck`
+
 ## Next steps
 
-1. Next.js portal: login/register, org switcher, runs list (status, progress, config tags), run detail with
-   attempts table, datasets (upload JSONL), API keys (show secret once), billing, members.
-   Proxy `/portal/*` to the API through Next.js rewrites so the session cookie stays same-origin.
-2. Node client package `runEval({ apiKey, project, dataset, solve, ... })` following the protocol in README.md.
-3. Member invitations, email verification, password reset.
+1. Node client package `runEval({ apiKey, project, dataset, solve, ... })` following the protocol in README.md.
+2. Member invitations (portal Members page has a placeholder), email verification, password reset.
+3. Portal: Dockerfile/compose service, browser e2e tests in CI.

@@ -288,3 +288,14 @@ describe("stripe webhook", () => {
     expect(sub).toMatchObject({ status: "active", plan: "Pro", stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1" });
   });
 });
+
+describe("organization slugs", () => {
+  it("never hands out a slug that would shadow a portal page", async () => {
+    const { app } = await setup();
+    const reg = await portal(app)("POST", "/portal/auth/register", {
+      email: "login@example.com", password: "correct-horse-battery", name: "L", organizationName: "Login",
+    });
+    expect(reg.status).toBe(201);
+    expect(reg.body.organizations[0].slug).toBe("login-2");
+  });
+});

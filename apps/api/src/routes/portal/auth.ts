@@ -9,10 +9,17 @@ import { hashPassword, randomToken, sha256, verifyPassword } from "../../lib/cry
 import { conflict, HttpError, slugify } from "../../lib/http.js";
 import { requireUser, SESSION_COOKIE } from "../../plugins/auth.js";
 
+/** Org slugs are the first path segment of portal URLs (/acme/runs), so they can't shadow portal pages. */
+const RESERVED_ORG_SLUGS = new Set([
+  "login", "register", "account", "logout", "portal", "api", "v1", "docs", "health", "webhooks",
+  "settings", "admin", "new", "static", "_next",
+]);
+
 export async function uniqueOrgSlug(db: Db, name: string) {
   const base = slugify(name);
   for (let i = 0; i < 50; i++) {
     const slug = i === 0 ? base : `${base}-${i + 1}`;
+    if (RESERVED_ORG_SLUGS.has(slug)) continue;
     const [hit] = await db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, slug));
     if (!hit) return slug;
   }
