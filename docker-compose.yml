@@ -1,0 +1,27 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: reval
+      POSTGRES_PASSWORD: reval
+      POSTGRES_DB: reval
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reval"]
+      interval: 3s
+      retries: 20
+
+  api:
+    build: ./apps/api
+    depends_on:
+      db: { condition: service_healthy }
+    ports: ["4000:4000"]
+    env_file: ./apps/api/.env
+    environment:
+      DATABASE_URL: postgres://reval:reval@db:5432/reval
+      # development by default so BILLING_MODE=dev works; use production + Stripe for real deployments
+      NODE_ENV: ${API_NODE_ENV:-development}
+
+volumes:
+  pgdata:
