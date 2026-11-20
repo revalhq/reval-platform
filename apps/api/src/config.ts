@@ -24,7 +24,12 @@ export type Config = z.infer<typeof schema>;
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   // Vercel's Supabase/Neon integrations provide POSTGRES_URL (pooled); DATABASE_URL wins when both are set.
-  env = { ...env, DATABASE_URL: env.DATABASE_URL || env.POSTGRES_URL };
+  // Vercel's Stripe integration provides STRIPE_PROD_STRIPE_SECRET_KEY; STRIPE_SECRET_KEY wins when both are set.
+  env = {
+    ...env,
+    DATABASE_URL: env.DATABASE_URL || env.POSTGRES_URL,
+    STRIPE_SECRET_KEY: env.STRIPE_SECRET_KEY || env.STRIPE_PROD_STRIPE_SECRET_KEY,
+  };
   const config = schema.parse(env);
   if (config.BILLING_MODE === "stripe" &&
       (!config.STRIPE_SECRET_KEY || !config.STRIPE_WEBHOOK_SECRET || !config.STRIPE_PRICE_ID)) {
