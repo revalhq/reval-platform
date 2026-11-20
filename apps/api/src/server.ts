@@ -1,4 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+// Vercel's Fastify preset only accepts an entry file that imports "fastify" itself (a static check
+// on this file). The app is built in build-app.ts; this import exists solely to satisfy that check.
+import "fastify";
 import { buildApp } from "./build-app.js";
 import { loadConfig } from "./config.js";
 import { connectPostgres } from "./db/client.js";
