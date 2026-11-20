@@ -10,6 +10,9 @@ const schema = z.object({
   COOKIE_SECURE: z.stringbool().default(false),
   // "dev" skips Stripe and exposes a dev-only activation endpoint.
   BILLING_MODE: z.enum(["stripe", "dev"]).default("dev"),
+  // Testing-phase escape hatch: lets a production deploy (e.g. Vercel) run with BILLING_MODE=dev, so anyone
+  // can activate a subscription for free. Remove before real customers sign up.
+  ALLOW_DEV_BILLING_IN_PRODUCTION: z.stringbool().default(false),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_PRICE_ID: z.string().optional(),
@@ -31,15 +34,15 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     STRIPE_SECRET_KEY: env.STRIPE_SECRET_KEY || env.STRIPE_PROD_STRIPE_SECRET_KEY,
   };
   const config = schema.parse(env);
-  if (config.BILLING_MODE === "stripe" &&
-      (!config.STRIPE_SECRET_KEY || !config.STRIPE_WEBHOOK_SECRET || !config.STRIPE_PRICE_ID)) {
-    throw new Error("BILLING_MODE=stripe requires STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and STRIPE_PRICE_ID");
+  if (config.BILLING_MODE === "stripe") {
+    const missing = (["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_ID"] as const).filter((k) => !config[k]);
+    if (missing.length) throw new Error(`BILLING_MODE=stripe requires ${missing.join(", ")} (missing or empty)`);
   }
   if (config.NODE_ENV === "production" && !env.DATABASE_URL) {
     throw new Error("DATABASE_URL must be set in production");
   }
-  if (config.NODE_ENV === "production" && config.BILLING_MODE === "dev") {
-    throw new Error("BILLING_MODE=dev is not allowed in production");
+  if (config.NODE_ENV === "production" && config.BILLING_MODE === "dev" && !config.ALLOW_DEV_BILLING_IN_PRODUCTION) {
+    throw new Error("BILLING_MODE=dev is not allowed in production (set ALLOW_DEV_BILLING_IN_PRODUCTION=true while testing)");
   }
   return config;
 }
