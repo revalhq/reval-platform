@@ -4,7 +4,9 @@ import { connectPostgres } from "./db/client.js";
 
 const config = loadConfig();
 const { db, migrate, close } = await connectPostgres(config.DATABASE_URL);
-await migrate();
+// On Vercel (serverless) the drizzle/ folder isn't bundled and every cold start would race to migrate,
+// so migrations run separately there: `npm run db:migrate`.
+if (!process.env.VERCEL) await migrate();
 const app = await buildApp(db, config);
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
