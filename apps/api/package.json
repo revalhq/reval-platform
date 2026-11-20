@@ -38,6 +38,7 @@
   "overrides": {
     "@esbuild-kit/core-utils": {
       "esbuild": "^0.25.12"
-    }
+    },
+    "content-disposition": "2.0.1"
   }
 }
