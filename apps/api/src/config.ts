@@ -23,10 +23,15 @@ const schema = z.object({
 export type Config = z.infer<typeof schema>;
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+  // Vercel's Supabase/Neon integrations provide POSTGRES_URL (pooled); DATABASE_URL wins when both are set.
+  env = { ...env, DATABASE_URL: env.DATABASE_URL || env.POSTGRES_URL };
   const config = schema.parse(env);
   if (config.BILLING_MODE === "stripe" &&
       (!config.STRIPE_SECRET_KEY || !config.STRIPE_WEBHOOK_SECRET || !config.STRIPE_PRICE_ID)) {
     throw new Error("BILLING_MODE=stripe requires STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and STRIPE_PRICE_ID");
+  }
+  if (config.NODE_ENV === "production" && !env.DATABASE_URL) {
+    throw new Error("DATABASE_URL must be set in production");
   }
   if (config.NODE_ENV === "production" && config.BILLING_MODE === "dev") {
     throw new Error("BILLING_MODE=dev is not allowed in production");
