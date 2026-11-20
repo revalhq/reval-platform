@@ -31,7 +31,7 @@ cp apps/api/.env.example apps/api/.env
 docker compose up --build        # Postgres + API on http://localhost:4000
 ```
 
-API docs (Swagger UI): http://localhost:4000/docs. Migrations run on startup.
+API docs (Swagger UI): http://localhost:4000/docs. Migrations run on startup (except on Vercel, where you run `npm run db:migrate` against the production `DATABASE_URL`).
 
 Local development without Docker for the API:
 

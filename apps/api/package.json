@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
+    "vercel-build": "if [ \"$VERCEL_ENV\" = production ]; then npm run db:migrate; fi && npm run build",
     "start": "node dist/server.js",
     "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/scripts/migrate.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "openapi": "tsx src/scripts/export-openapi.ts"
