@@ -15,6 +15,8 @@ help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  make %-10s %s\n", $$1, $$2}'
 
 dev: install apps/api/.env db ## Run Postgres + API (watch mode) + portal; Ctrl-C stops everything but Postgres
+	@# Next allows one dev server per app; a second one exits, leaving you on the old (maybe broken) one.
+	@node apps/portal/scripts/dev-server.mjs check dev
 	@docker compose stop api >/dev/null 2>&1 || true
 	@if lsof -iTCP:$(API_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
 	  echo "Port $(API_PORT) is in use by another process. Free it or run: make dev API_PORT=4001"; exit 1; fi
@@ -51,7 +53,8 @@ apps/api/.env:
 db: ## Start Postgres in Docker and wait until it is healthy
 	docker compose up -d --wait db
 
-stop: ## Stop the Docker containers (data is kept)
+stop: ## Stop the Docker containers (data is kept) and any leftover portal dev server
+	@node apps/portal/scripts/dev-server.mjs stop
 	docker compose stop
 
 test: apps/api/node_modules ## Run the API test suite

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 import useSWR from "swr";
+import { ProjectVariants } from "@/components/project-variants";
 import { ProgressBar, RunStatusBadge } from "@/components/run-ui";
 import {
   Alert, Button, Card, Code, EmptyState, Field, Input, Loading, Modal, PageHeader, Table, Td, Textarea, Th, useNow,
@@ -44,7 +45,8 @@ export default function ProjectPage() {
       />
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <Card title="Datasets" padded={false} className="lg:col-span-2">
+        <div className="space-y-6 lg:col-span-2">
+        <Card title="Datasets" padded={false}>
           {datasetsError ? <div className="p-4"><Alert>{errorMessage(datasetsError)}</Alert></div>
             : !datasets ? <Loading />
             : datasets.datasets.length === 0 ? (
@@ -70,8 +72,10 @@ export default function ProjectPage() {
               </Table>
             )}
         </Card>
+        <ProjectVariants projectId={project.id} />
+        </div>
 
-        <Card title="Recent runs" padded={false}
+        <Card title="Recent runs" className="self-start" padded={false}
           actions={project.runCount > 0 && <Link href={href(`/runs?project=${project.slug}`)} className="text-xs font-medium text-brand-600">View all</Link>}>
           {!runs ? <Loading /> : runs.runs.length === 0 ? <EmptyState title="No runs yet" /> : (
             <ul className="divide-y divide-zinc-100">

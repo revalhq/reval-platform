@@ -138,6 +138,23 @@ export function ConfigChips({ config, max = 4 }: { config: Record<string, unknow
   );
 }
 
+/** The runs-list "Config" cell: config chips for a single-config run, variant names when comparing. */
+export function RunConfig({ run, max = 3 }: { run: Pick<Run, "config" | "variants">; max?: number }) {
+  if (run.variants.length <= 1) return <ConfigChips config={run.config} max={max} />;
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <span className="mr-0.5 text-[11px] font-medium text-zinc-500">{run.variants.length} variants:</span>
+      {run.variants.slice(0, max).map((v) => (
+        <span key={v.id} className="inline-flex max-w-40 truncate rounded bg-violet-50 px-1.5 py-0.5 font-mono text-[11px] text-violet-700 ring-1 ring-violet-200 ring-inset"
+          title={Object.entries(v.config).map(([k, x]) => `${k} = ${scalar(x)}`).join("\n") || v.name}>
+          {v.name}
+        </span>
+      ))}
+      {run.variants.length > max && <span className="px-1 text-[11px] text-zinc-500">+{run.variants.length - max}</span>}
+    </div>
+  );
+}
+
 export function Tags({ tags }: { tags: string[] }) {
   if (tags.length === 0) return null;
   return (

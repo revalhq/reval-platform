@@ -142,7 +142,10 @@ describe("user journey", () => {
     const l1 = await api("POST", `/v1/runs/${runId}/lease`, { max: 4 });
     expect(l1.body.status).toBe("running");
     expect(l1.body.tasks).toHaveLength(4);
-    expect(l1.body.tasks[0]).toMatchObject({ itemId: "p001", repeatIndex: 0, input: { puzzle: "Who owns the fish?" } });
+    expect(l1.body.tasks[0]).toMatchObject({
+      itemId: "p001", repeatIndex: 0, variant: "default",
+      config: { model: "claude-sonnet-4-6", temperature: 0 }, input: { puzzle: "Who owns the fish?" },
+    });
     expect(JSON.stringify(l1.body)).not.toContain("Ben");
 
     // Submit 3 results; one is a solver error; one uses a bogus lease and is rejected.
@@ -225,6 +228,174 @@ describe("user journey", () => {
     const cancelled = await call("POST", `/portal/orgs/${orgId}/runs/${run3.number}/cancel`);
     expect(cancelled.body.run.status).toBe("cancelled");
     expect((await api("POST", `/v1/runs/${run3.id}/lease`, {})).body.done).toBe(true);
+  });
+
+  it("runs several variants side by side, item by item", async () => {
+    const api = sdk(app, apiKey);
+    const base = { project: "zebra-solver", dataset: "zebra-puzzles", limit: 2, timeoutMs: 5_000 };
+    const variants = [
+      { name: "gpt", config: { provider: "openai", model: "gpt-5" } },
+      { name: "claude", config: { provider: "anthropic", model: "claude-sonnet-5-5" } },
+    ];
+
+    const both = await api("POST", "/v1/runs", { ...base, config: { model: "x" }, variants });
+    expect(both.status).toBe(422);
+    expect(both.body.error.code).toBe("config_and_variants");
+    const dupe = await api("POST", "/v1/runs", { ...base, variants: [{ name: "a" }, { name: "a" }] });
+    expect(dupe.body.error.code).toBe("duplicate_variant");
+
+    const created = await api("POST", "/v1/runs", { ...base, variants });
+    expect(created.status).toBe(201);
+    expect(created.body.progress.total).toBe(4); // 2 items × 2 variants
+    expect(created.body.variants).toEqual(variants);
+    const runId = created.body.id;
+
+    // max=3 → one whole group (both variants of p001); never half a group.
+    const l1 = await api("POST", `/v1/runs/${runId}/lease`, { max: 3 });
+    expect(l1.body.tasks.map((t: { itemId: string; variant: string }) => [t.itemId, t.variant]))
+      .toEqual([["p001", "gpt"], ["p001", "claude"]]);
+    expect(l1.body.tasks[1].config).toEqual({ provider: "anthropic", model: "claude-sonnet-5-5" });
+    expect(JSON.stringify(l1.body)).not.toContain("Ben");
+
+    // max=1 is less than the number of variants: the whole next group still comes back.
+    const l2 = await api("POST", `/v1/runs/${runId}/lease`, { max: 1 });
+    expect(l2.body.tasks.map((t: { itemId: string }) => t.itemId)).toEqual(["p002", "p002"]);
+
+    const submit = (tasks: { attemptId: string; leaseId: string; variant: string }[]) =>
+      api("POST", `/v1/runs/${runId}/results`, {
+        results: tasks.map((t) => ({
+          attemptId: t.attemptId, leaseId: t.leaseId, output: `${t.variant} answer`,
+          latencyMs: t.variant === "gpt" ? 900 : 400, metadata: { costUsd: t.variant === "gpt" ? 0.02 : 0.01, model: t.variant },
+        })),
+      });
+    expect((await submit(l1.body.tasks)).body.accepted).toHaveLength(2);
+    const done = await submit(l2.body.tasks);
+    expect(done.body.status).toBe("completed");
+
+    const runNumber = created.body.number;
+    const detail = await call("GET", `/portal/orgs/${orgId}/runs/${runNumber}`);
+    expect(detail.body.run.variants.map((v: { name: string }) => v.name)).toEqual(["gpt", "claude"]);
+    expect(detail.body.run.config).toEqual({});
+    const [gptStats, claudeStats] = detail.body.stats.variants;
+    expect(gptStats).toMatchObject({ progress: { total: 2, succeeded: 2 }, latencyP50: 900 });
+    expect(gptStats.metadataTotals.costUsd).toEqual({ sum: 0.04, count: 2 });
+    expect(claudeStats).toMatchObject({ latencyP50: 400, metadataTotals: { costUsd: { sum: 0.02, count: 2 } } });
+    expect(gptStats.metadataTotals.model).toBeUndefined(); // only numeric metadata is summed
+
+    const matrix = await call("GET", `/portal/orgs/${orgId}/runs/${runNumber}/matrix?limit=1&offset=1`);
+    expect(matrix.body.total).toBe(2);
+    expect(matrix.body.rows).toHaveLength(1);
+    expect(matrix.body.rows[0]).toMatchObject({
+      item: { externalId: "p002", expected: "Fay" }, repeatIndex: 0,
+      attempts: [{ variant: { name: "gpt" }, output: "gpt answer" }, { variant: { name: "claude" }, output: "claude answer" }],
+    });
+    expect(matrix.body.rows[0].attempts[0].leasedAt).toBe(matrix.body.rows[0].attempts[1].leasedAt);
+
+    const claudeOnly = await call("GET", `/portal/orgs/${orgId}/runs/${runNumber}/attempts?variantId=${claudeStats.variantId}`);
+    expect(claudeOnly.body.total).toBe(2);
+  });
+
+  it("re-leases an expired attempt, and never splits a group between concurrent clients", async () => {
+    const api = sdk(app, apiKey);
+    const run = (await api("POST", "/v1/runs", {
+      project: "zebra-solver", dataset: "zebra-puzzles", variants: [{ name: "a" }, { name: "b" }],
+    })).body;
+    const [c1, c2] = await Promise.all([
+      api("POST", `/v1/runs/${run.id}/lease`, { max: 2 }),
+      api("POST", `/v1/runs/${run.id}/lease`, { max: 2 }),
+    ]);
+    for (const l of [c1, c2]) {
+      expect(l.body.tasks.map((t: { variant: string }) => t.variant)).toEqual(["a", "b"]);
+      expect(new Set(l.body.tasks.map((t: { itemId: string }) => t.itemId)).size).toBe(1);
+    }
+    expect(c1.body.tasks[0].itemId).not.toBe(c2.body.tasks[0].itemId);
+
+    // Variant b's lease expires: only b is handed out again (a's result is already in).
+    const [a, b] = c1.body.tasks;
+    await api("POST", `/v1/runs/${run.id}/results`, { results: [{ attemptId: a.attemptId, leaseId: a.leaseId, output: 1 }] });
+    await db.update(schema.attempts).set({ leaseExpiresAt: new Date(Date.now() - 1000) })
+      .where(eq(schema.attempts.id, b.attemptId));
+    const again = await api("POST", `/v1/runs/${run.id}/lease`, { max: 2 });
+    expect(again.body.tasks.map((t: { attemptId: string }) => t.attemptId)).toEqual([b.attemptId]);
+    await api("POST", `/v1/runs/${run.id}/cancel`);
+  });
+
+  it("runs the project's saved variants, or the ones picked by name", async () => {
+    const api = sdk(app, apiKey);
+    const projectId = (await call("GET", `/portal/orgs/${orgId}/projects`)).body.projects[0].id;
+    const base = `/portal/orgs/${orgId}/projects/${projectId}/variants`;
+
+    const gpt = await call("POST", base, { name: "gpt", config: { model: "gpt-5" } });
+    expect(gpt.status).toBe(201);
+    const claude = (await call("POST", base, { name: "claude", config: { model: "claude-sonnet-5-5" } })).body.variant;
+    expect((await call("POST", base, { name: "gpt" })).status).toBe(409);
+    const renamed = await call("PATCH", `${base}/${claude.id}`, { config: { model: "claude-sonnet-5-5", prompt: "v3" } });
+    expect(renamed.body.variant).toMatchObject({ name: "claude", config: { prompt: "v3" } });
+    expect((await call("GET", base)).body.variants.map((v: { name: string }) => v.name)).toEqual(["gpt", "claude"]);
+
+    // No config/variants → every saved variant, with the config as saved right now.
+    const all = await api("POST", "/v1/runs", { project: "zebra-solver", dataset: "zebra-puzzles", limit: 1 });
+    expect(all.body.variants).toEqual([
+      { name: "gpt", config: { model: "gpt-5" } },
+      { name: "claude", config: { model: "claude-sonnet-5-5", prompt: "v3" } },
+    ]);
+    // Pick by name, mixed with an inline one.
+    const picked = await api("POST", "/v1/runs", {
+      project: "zebra-solver", dataset: "zebra-puzzles", limit: 1, variants: ["claude", { name: "local", config: { model: "llama" } }],
+    });
+    expect(picked.body.variants.map((v: { name: string }) => v.name)).toEqual(["claude", "local"]);
+    const unknown = await api("POST", "/v1/runs", { project: "zebra-solver", dataset: "zebra-puzzles", variants: ["nope"] });
+    expect(unknown.status).toBe(422);
+    expect(unknown.body.error).toMatchObject({ code: "unknown_variant", details: { available: ["gpt", "claude"] } });
+    // `config` still means exactly one variant.
+    const single = await api("POST", "/v1/runs", { project: "zebra-solver", dataset: "zebra-puzzles", limit: 1, config: { model: "x" } });
+    expect(single.body.variants).toEqual([{ name: "default", config: { model: "x" } }]);
+
+    // Editing a saved variant doesn't change runs that already used it.
+    await call("PATCH", `${base}/${gpt.body.variant.id}`, { config: { model: "gpt-6" } });
+    const detail = await call("GET", `/portal/orgs/${orgId}/runs/${all.body.number}`);
+    expect(detail.body.run.variants[0].config).toEqual({ model: "gpt-5" });
+
+    expect((await call("DELETE", `${base}/${gpt.body.variant.id}`)).status).toBe(200);
+    expect((await call("DELETE", `${base}/${claude.id}`)).status).toBe(200);
+    for (const r of [all, picked, single]) await api("POST", `/v1/runs/${r.body.id}/cancel`);
+  });
+
+  it("edits dataset items in the browser as a new version", async () => {
+    const projectId = (await call("GET", `/portal/orgs/${orgId}/projects`)).body.projects[0].id;
+    const datasetId = (await call("GET", `/portal/orgs/${orgId}/projects/${projectId}/datasets`)).body.datasets[0].id;
+    const base = `/portal/orgs/${orgId}/projects/${projectId}/datasets/${datasetId}`;
+    const v2 = (await call("GET", `${base}/versions/2/items`)).body.items;
+    const [p1, p2] = v2;
+
+    // Only the latest version can be edited.
+    const stale = await call("POST", `${base}/versions/1/edits`, { add: [{ input: 1 }] });
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe("stale_version");
+    expect((await call("POST", `${base}/versions/2/edits`, {})).body.error.code).toBe("no_changes");
+    expect((await call("POST", `${base}/versions/2/edits`, { remove: ["00000000-0000-4000-8000-000000000000"] })).body.error.code)
+      .toBe("unknown_item");
+
+    const saved = await call("POST", `${base}/versions/2/edits`, {
+      remove: [p1.id],
+      update: [{ itemId: p2.id, id: "p002", input: { puzzle: "Who owns the turtle?" }, expected: "Gus" }],
+      add: [{ id: "p004", input: { puzzle: "Who plays chess?" }, expected: "Ida", metadata: { difficulty: "easy" } }],
+    });
+    expect(saved.status).toBe(201);
+    expect(saved.body.version).toMatchObject({ version: 3, itemCount: 3 });
+
+    const listed = (await call("GET", `/portal/orgs/${orgId}/projects/${projectId}/datasets`)).body.datasets[0];
+    expect(listed.latestVersion).toBe(3);
+    const project = (await call("GET", `/portal/orgs/${orgId}/projects`)).body.projects[0];
+    expect(project.runCount).toBeGreaterThan(5);
+    expect(project.lastRunAt).not.toBeNull();
+
+    const v3 = (await call("GET", `${base}/versions/3/items`)).body.items;
+    expect(v3.map((i: { externalId: string; position: number; expected: unknown }) => [i.position, i.externalId, i.expected]))
+      .toEqual([[0, "p002", "Gus"], [1, "p003", "Cy"], [2, "p004", "Ida"]]);
+    expect(v3[1].metadata).toEqual({ difficulty: "hard" }); // untouched items are copied as-is
+    // The old version is unchanged.
+    expect((await call("GET", `${base}/versions/2/items`)).body.items).toEqual(v2);
   });
 
   it("keeps organizations isolated and enforces key revocation", async () => {

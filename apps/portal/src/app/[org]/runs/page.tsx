@@ -6,7 +6,7 @@ import { Suspense } from "react";
 import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
 import {
-  ConfigChips, isActive, ProgressBar, RunStatusBadge, Tags, triggerLabel,
+  isActive, ProgressBar, RunConfig, RunStatusBadge, Tags, triggerLabel,
 } from "@/components/run-ui";
 import { Alert, Button, Card, EmptyState, Loading, PageHeader, Select, Table, Td, Th, useNow } from "@/components/ui";
 import { withQuery } from "@/lib/api";
@@ -125,7 +125,7 @@ function RunsList() {
                       <div className="font-medium">{r.project.name}</div>
                       <div className="text-xs text-zinc-500">{r.dataset.name} <span className="font-mono">v{r.dataset.version}</span></div>
                     </Td>
-                    <Td><ConfigChips config={r.config} max={3} /></Td>
+                    <Td><RunConfig run={r} /></Td>
                     <Td>
                       <ProgressBar progress={r.progress} />
                       <div className="mt-1 flex justify-between text-xs text-zinc-500 tabular-nums">

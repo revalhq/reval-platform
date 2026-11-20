@@ -114,6 +114,21 @@ export const datasetItems = pgTable("dataset_items", {
   metadata: jsonb("metadata").notNull().default({}),
 }, (t) => [index("dataset_items_version_idx").on(t.versionId, t.position)]);
 
+/**
+ * Configurations saved on a project (e.g. "gpt-5", "claude-prompt-v3"), managed in the portal.
+ * A run started without `config`/`variants` runs all of them; clients can also pick some by name.
+ * Runs copy the config into run_variants, so editing a saved variant never changes past runs.
+ */
+export const projectVariants = pgTable("project_variants", {
+  id: id(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  config: jsonb("config").notNull().default({}),
+  position: integer("position").notNull(),
+  createdAt: createdAt(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("project_variants_project_name_uq").on(t.projectId, t.name)]);
+
 // ---------------------------------------------------------------- runs
 
 export const runStatusEnum = pgEnum("run_status", [
@@ -129,6 +144,7 @@ export const runs = pgTable("runs", {
   name: text("name"),
   status: runStatusEnum("status").notNull().default("queued"),
   // What the client was testing: model, temperature, prompt version, chunk size...
+  // With several variants this is {} and each variant carries its own config.
   config: jsonb("config").notNull().default({}),
   tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
   repeats: integer("repeats").notNull(),
@@ -147,18 +163,36 @@ export const runs = pgTable("runs", {
   uniqueIndex("runs_org_number_uq").on(t.orgId, t.number),
 ]);
 
+/**
+ * A configuration under test within a run (e.g. two models, two prompts). Every variant runs
+ * every item, and the variants of one item are leased together so they execute at the same time.
+ * A run without explicit variants has one, named "default".
+ */
+export const runVariants = pgTable("run_variants", {
+  id: id(),
+  runId: uuid("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  position: integer("position").notNull(),
+  config: jsonb("config").notNull().default({}),
+}, (t) => [
+  uniqueIndex("run_variants_run_name_uq").on(t.runId, t.name),
+  uniqueIndex("run_variants_run_position_uq").on(t.runId, t.position),
+]);
+
 export const attemptStatusEnum = pgEnum("attempt_status", [
   "pending", "leased", "succeeded", "errored", "abandoned", "cancelled",
 ]);
 
-/** One execution of one dataset item. repeats=3 → three attempts per item. */
+/** One execution of one dataset item by one variant. repeats=3, 2 variants → six attempts per item. */
 export const attempts = pgTable("attempts", {
   id: id(),
   runId: uuid("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
   itemId: uuid("item_id").notNull().references(() => datasetItems.id),
+  variantId: uuid("variant_id").notNull().references(() => runVariants.id, { onDelete: "cascade" }),
   repeatIndex: integer("repeat_index").notNull(),
   status: attemptStatusEnum("status").notNull().default("pending"),
   leaseId: uuid("lease_id"),
+  leasedAt: timestamp("leased_at", { withTimezone: true }), // when the current/last lease was handed out
   leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
   leaseCount: integer("lease_count").notNull().default(0),
   output: jsonb("output"),
@@ -169,7 +203,7 @@ export const attempts = pgTable("attempts", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
 }, (t) => [
   index("attempts_run_status_idx").on(t.runId, t.status),
-  uniqueIndex("attempts_run_item_repeat_uq").on(t.runId, t.itemId, t.repeatIndex),
+  uniqueIndex("attempts_run_item_repeat_variant_uq").on(t.runId, t.itemId, t.repeatIndex, t.variantId),
 ]);
 
 /** Placeholder for the evaluation stage, which is out of scope for now. */

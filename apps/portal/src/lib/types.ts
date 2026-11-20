@@ -73,6 +73,9 @@ export interface DatasetItem {
 
 export type Progress = Record<AttemptStatus, number> & { total: number; done: number };
 
+/** A configuration under test. Single-config runs have one, named "default". */
+export interface RunVariant { id: string; name: string; position: number; config: Record<string, unknown> }
+
 export interface Run {
   id: string;
   number: number;
@@ -91,6 +94,20 @@ export interface Run {
   project: { id: string; name: string; slug: string };
   dataset: { id: string; name: string; slug: string; version: number };
   progress: Progress;
+  variants: RunVariant[];
+}
+
+export interface VariantStats {
+  variantId: string;
+  progress: Progress;
+  latencyP50: number | null;
+  latencyP95: number | null;
+  metadataTotals: Record<string, { sum: number; count: number }>;
+}
+
+export interface RunDetail {
+  run: Run;
+  stats: { latencyP50: number | string | null; latencyP95: number | string | null; variants: VariantStats[] };
 }
 
 export interface Attempt {
@@ -102,6 +119,25 @@ export interface Attempt {
   error: string | null;
   latencyMs: number | null;
   metadata: Record<string, unknown>;
+  leasedAt: string | null;
   completedAt: string | null;
+  variant: { id: string; name: string };
   item: { id: string; externalId: string | null; position: number; input: unknown; expected: unknown };
+}
+
+/** One row of the run matrix: an item (and repeat) with each variant's attempt, in variant order. */
+export interface MatrixRow {
+  item: Attempt["item"];
+  repeatIndex: number;
+  attempts: Omit<Attempt, "item">[];
+}
+
+/** A configuration saved on a project; runs started without config/variants use all of them. */
+export interface ProjectVariant {
+  id: string;
+  name: string;
+  config: Record<string, unknown>;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
 }
