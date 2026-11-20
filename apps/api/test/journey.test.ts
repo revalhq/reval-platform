@@ -9,7 +9,7 @@ import { migrate } from "drizzle-orm/pglite/migrator";
 import type { FastifyInstance } from "fastify";
 import Stripe from "stripe";
 import { beforeAll, describe, expect, it } from "vitest";
-import { buildApp } from "../src/app.js";
+import { buildApp } from "../src/build-app.js";
 import { loadConfig } from "../src/config.js";
 import type { Db } from "../src/db/client.js";
 import * as schema from "../src/db/schema.js";

@@ -1,6 +1,6 @@
 // Writes openapi.json: the contract the Node/Python/PHP/Java packages and the CLI are built against.
 import { writeFileSync } from "node:fs";
-import { buildApp } from "../app.js";
+import { buildApp } from "../build-app.js";
 import { loadConfig } from "../config.js";
 import type { Db } from "../db/client.js";
 
