@@ -29,6 +29,11 @@ const RunSummary = z.object({
 });
 const ErrorSchema = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.any().optional() }) });
 const RunParams = z.object({ runId: z.uuid() });
+const ConfigSchema = z.record(z.string(), z.unknown());
+const VariantSchema = z.object({
+  name: z.string().trim().min(1).max(50).describe("Label shown in the portal, unique within the run, e.g. 'gpt-5' or 'prompt-v2'"),
+  config: ConfigSchema.optional().describe("What this variant tests; sent back with each of its tasks"),
+});
 
 export function v1Routes(config: Config): FastifyPluginAsyncZod {
   return async (app) => {
@@ -73,8 +78,16 @@ export function v1Routes(config: Config): FastifyPluginAsyncZod {
           dataset: z.string().describe("Dataset slug"),
           datasetVersion: z.int().positive().optional().describe("Defaults to the latest version"),
           name: z.string().max(200).optional(),
-          config: z.record(z.string(), z.unknown()).optional()
-            .describe("What is being tested, e.g. { model, temperature, promptVersion }"),
+          config: ConfigSchema.optional()
+            .describe("What is being tested, e.g. { model, temperature, promptVersion }. Shorthand for a single variant; don't combine with `variants`."),
+          variants: z.array(z.union([
+            z.string().trim().min(1).max(50).describe("Name of a variant saved on the project in the portal"),
+            VariantSchema,
+          ])).min(1).max(10).optional().describe([
+            "Configurations to compare in this run: inline { name, config } objects and/or names of variants saved",
+            "on the project. Every variant runs every item, and the variants of one item are leased together so the",
+            "client can run them at the same time. Omit both `config` and `variants` to run all of the project's saved variants.",
+          ].join(" ")),
           tags: z.array(z.string().max(50)).max(20).optional(),
           repeats: z.int().min(1).max(20).default(1),
           timeoutMs: z.int().min(1_000).max(900_000).default(120_000),
@@ -84,6 +97,7 @@ export function v1Routes(config: Config): FastifyPluginAsyncZod {
         }),
         response: {
           201: RunSummary.extend({
+            variants: z.array(z.object({ name: z.string(), config: ConfigSchema })),
             execution: z.object({
               timeoutMs: z.number().describe("Abort each solver call after this long"),
               concurrency: z.number().describe("Recommended number of parallel solver calls"),
@@ -95,16 +109,17 @@ export function v1Routes(config: Config): FastifyPluginAsyncZod {
       },
     }, async (req, reply) => {
       const b = req.body;
-      const { run } = await createRun(app.db, {
+      const { run, variants } = await createRun(app.db, {
         orgId: req.apiKey!.orgId, apiKeyId: req.apiKey!.keyId,
         project: b.project, dataset: b.dataset, datasetVersion: b.datasetVersion,
-        name: b.name, config: b.config, tags: b.tags, repeats: b.repeats, timeoutMs: b.timeoutMs,
+        name: b.name, config: b.config, variants: b.variants, tags: b.tags, repeats: b.repeats, timeoutMs: b.timeoutMs,
         maxLeases: 3, limit: b.limit, trigger: b.trigger,
       });
       const progress = (await progressFor(app.db, [run.id])).get(run.id)!;
       reply.code(201);
       return {
         ...summary(run, await orgSlug(run.orgId), progress),
+        variants: variants.map((v) => ({ name: v.name, config: v.config as Record<string, unknown> })),
         execution: {
           timeoutMs: run.timeoutMs,
           concurrency: config.RECOMMENDED_CONCURRENCY,
@@ -118,6 +133,8 @@ export function v1Routes(config: Config): FastifyPluginAsyncZod {
         tags, security, summary: "Lease tasks to execute",
         description: [
           "Returns up to `max` tasks. Submit each result with its leaseId before leaseExpiresAt.",
+          "Tasks for the same item and repeat (one per variant) always come together, so run them at the same time;",
+          "if a run has more variants than `max`, one item's tasks are returned anyway.",
           "When `tasks` is empty: stop if `done` is true, otherwise wait `retryAfterMs` and lease again",
           "(other clients still hold leases that may expire and be handed out again).",
         ].join(" "),
@@ -134,6 +151,8 @@ export function v1Routes(config: Config): FastifyPluginAsyncZod {
               leaseExpiresAt: z.iso.datetime(),
               itemId: z.string().describe("The dataset item's own id, if it had one"),
               repeatIndex: z.number(),
+              variant: z.string().describe("Name of the variant this task is for (\"default\" for single-config runs)"),
+              config: ConfigSchema.describe("The variant's config: pass it to the solver"),
               input: z.any(),
             })),
           }),

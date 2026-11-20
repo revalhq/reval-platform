@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Fragment, Suspense, useState } from "react";
+import { type FormEvent, Fragment, Suspense, useEffect, useState } from "react";
 import useSWR from "swr";
 import {
-  Alert, Button, Card, Code, CopyButton, cx, EmptyState, JsonView, Loading, Modal, PageHeader, Pager, Table, Td,
-  Textarea, Th,
+  Alert, Button, Card, Code, CopyButton, cx, EmptyState, Field, Input, JsonView, Loading, Modal, PageHeader, Pager,
+  Table, Td, Textarea, Th,
 } from "@/components/ui";
 import { api, errorMessage, type RequestOptions, withQuery } from "@/lib/api";
 import { dateTime, num, preview } from "@/lib/format";
@@ -17,6 +17,17 @@ const PAGE = 50;
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // matches the API's bodyLimit for uploads
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
+interface ItemFields { id?: string; input: unknown; expected?: unknown; metadata?: Record<string, unknown> }
+interface AddedItem extends ItemFields { key: string }
+/** Unsaved edits to the latest version. Saving turns them into a new immutable version. */
+interface Draft { updates: Record<string, ItemFields>; removed: string[]; added: AddedItem[] }
+const EMPTY_DRAFT: Draft = { updates: {}, removed: [], added: [] };
+type ItemEditor = { kind: "existing"; item: DatasetItem } | { kind: "added"; item: AddedItem } | { kind: "new" };
+
+const fieldsOf = (it: DatasetItem): ItemFields => ({
+  id: it.externalId ?? undefined, input: it.input, expected: it.expected ?? undefined, metadata: it.metadata,
+});
+
 function DatasetView() {
   const { project: projectSlug, dataset: datasetSlug } = useParams<{ project: string; dataset: string }>();
   const { orgApi, href, can } = useOrg();
@@ -25,6 +36,19 @@ function DatasetView() {
   const params = useSearchParams();
   const [uploading, setUploading] = useState(false);
   const [offset, setOffset] = useState(0);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [editor, setEditor] = useState<ItemEditor | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const changeCount = Object.keys(draft.updates).length + draft.removed.length + draft.added.length;
+  useEffect(() => {
+    if (changeCount === 0) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [changeCount]);
 
   const { data: projects, error: e1 } = useSWR<{ projects: Project[] }>(orgApi("/projects"));
   const project = projects?.projects.find((p) => p.slug === projectSlug);
@@ -35,7 +59,7 @@ function DatasetView() {
 
   const requested = Number(params.get("version"));
   const latest = detail?.versions[0];
-  const selected = detail?.versions.find((v) => v.version === requested) ?? latest;
+  const selected = editing ? latest : detail?.versions.find((v) => v.version === requested) ?? latest;
   const { data: items, error: itemsError, isLoading: itemsLoading } = useSWR<{ items: DatasetItem[]; total: number }>(
     datasetPath && selected ? withQuery(`${datasetPath}/versions/${selected.version}/items`, { offset, limit: PAGE }) : null,
     { keepPreviousData: true },
@@ -50,12 +74,121 @@ function DatasetView() {
   const { dataset, versions } = detail;
 
   function selectVersion(v: number) {
+    if (editing) return;
     setOffset(0);
     router.replace(v === latest?.version ? pathname : `${pathname}?version=${v}`);
   }
 
-  const uploadButton = can("admin") && (
-    <Button onClick={() => setUploading(true)}>{versions.length ? "Upload new version" : "Upload items"}</Button>
+  function startEditing() {
+    setEditing(true);
+    setSaveError(null);
+    if (selected?.id !== latest?.id) { setOffset(0); router.replace(pathname); }
+    if (!latest) setEditor({ kind: "new" }); // empty dataset: start by adding the first item
+  }
+
+  function stopEditing() {
+    if (changeCount > 0 && !confirm(`Discard ${changeCount} unsaved change${changeCount === 1 ? "" : "s"}?`)) return;
+    setDraft(EMPTY_DRAFT);
+    setEditing(false);
+    setSaveError(null);
+  }
+
+  function saveItem(fields: ItemFields) {
+    if (!editor) return;
+    setDraft((d) => {
+      if (editor.kind === "new") return { ...d, added: [...d.added, { ...fields, key: crypto.randomUUID() }] };
+      if (editor.kind === "added") {
+        return { ...d, added: d.added.map((a) => (a.key === editor.item.key ? { ...fields, key: a.key } : a)) };
+      }
+      return { ...d, updates: { ...d.updates, [editor.item.id]: fields } };
+    });
+    setEditor(null);
+  }
+
+  const toggleRemoved = (itemId: string) => setDraft((d) => {
+    const { [itemId]: _, ...updates } = d.updates; // removing an item drops its pending edit
+    return d.removed.includes(itemId)
+      ? { ...d, removed: d.removed.filter((x) => x !== itemId) }
+      : { ...d, updates, removed: [...d.removed, itemId] };
+  });
+  const revert = (itemId: string) => setDraft((d) => {
+    const { [itemId]: _, ...updates } = d.updates;
+    return { ...d, updates };
+  });
+
+  async function save() {
+    setSaving(true);
+    setSaveError(null);
+    const add = draft.added.map(({ key: _, ...fields }) => fields);
+    try {
+      if (!latest) {
+        await api(`${datasetPath}/versions`, { body: { json: { items: add } } });
+      } else {
+        await api(`${datasetPath}/versions/${latest.version}/edits`, {
+          body: {
+            json: {
+              add,
+              update: Object.entries(draft.updates).map(([itemId, fields]) => ({ itemId, ...fields })),
+              remove: draft.removed,
+            },
+          },
+        });
+      }
+      setDraft(EMPTY_DRAFT);
+      setEditing(false);
+      setOffset(0);
+      await mutate();
+      router.replace(pathname);
+    } catch (err) {
+      setSaveError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const isAdmin = can("admin");
+  const headerActions = isAdmin && !editing && (
+    <div className="flex gap-2">
+      <Button variant="secondary" onClick={startEditing}>{versions.length ? "Edit items" : "Add items manually"}</Button>
+      <Button onClick={() => setUploading(true)}>{versions.length ? "Upload new version" : "Upload items"}</Button>
+    </div>
+  );
+  const nextVersion = (latest?.version ?? 0) + 1;
+
+  const editBar = editing && (
+    <div className="sticky top-0 z-10 mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-50 px-4 py-3 ring-1 ring-amber-200">
+      <p className="text-sm text-amber-900">
+        {latest ? <>Editing <span className="font-mono">v{latest.version}</span>. </> : null}
+        {changeCount === 0 ? "No changes yet." : <><strong>{changeCount}</strong> unsaved change{changeCount === 1 ? "" : "s"}.</>}
+        {" "}Saving creates <span className="font-mono">v{nextVersion}</span>; existing versions and runs stay as they are.
+      </p>
+      <div className="flex gap-2">
+        <Button size="sm" variant="secondary" onClick={() => setEditor({ kind: "new" })}>Add item</Button>
+        <Button size="sm" variant="ghost" onClick={stopEditing}>{changeCount ? "Discard" : "Done"}</Button>
+        <Button size="sm" loading={saving} disabled={changeCount === 0} onClick={save}>Save as v{nextVersion}</Button>
+      </div>
+    </div>
+  );
+
+  const addedList = editing && draft.added.length > 0 && (
+    <Card title={`New items (${draft.added.length})`} padded={false} className="mb-6"
+      actions={<span className="text-xs text-zinc-500">Added at the end of the dataset</span>}>
+      <Table>
+        <tbody className="divide-y divide-zinc-100">
+          {draft.added.map((a) => (
+            <tr key={a.key} className="bg-emerald-50/40">
+              <Td className="w-40 font-mono text-xs text-zinc-700">{a.id ?? <span className="text-zinc-400">—</span>}</Td>
+              <Td className="max-w-md"><span className="line-clamp-2 font-mono text-xs text-zinc-800">{preview(a.input, 160)}</span></Td>
+              <Td className="max-w-xs"><span className="line-clamp-2 font-mono text-xs text-zinc-600">{preview(a.expected, 100)}</span></Td>
+              <Td className="w-36 text-right whitespace-nowrap">
+                <Button size="sm" variant="secondary" onClick={() => setEditor({ kind: "added", item: a })}>Edit</Button>{" "}
+                <Button size="sm" variant="ghost" onClick={() => setDraft((d) => ({ ...d, added: d.added.filter((x) => x.key !== a.key) }))}>Remove</Button>
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    </Card>
   );
 
   return (
@@ -68,16 +201,25 @@ function DatasetView() {
         ]}
         title={dataset.name}
         description={<>{dataset.description && <span className="mr-2">{dataset.description}</span>}Slug <Code>{dataset.slug}</Code></>}
-        actions={uploadButton}
+        actions={headerActions}
       />
 
+      {editBar}
+      {saveError && <div className="mb-4"><Alert>{saveError}</Alert></div>}
+
       {versions.length === 0 ? (
-        <Card>
-          <EmptyState title="No items yet" action={uploadButton}>
-            Upload a JSONL file with one item per line: <Code>{'{"id": "q1", "input": …, "expected": …}'}</Code>.
-            {" "}<Code>input</Code> is required; <Code>id</Code>, <Code>expected</Code> and <Code>metadata</Code> are optional.
-          </EmptyState>
-        </Card>
+        <>
+          {addedList}
+          {!editing && (
+            <Card>
+              <EmptyState title="No items yet" action={headerActions}>
+                Upload a JSONL file with one item per line: <Code>{'{"id": "q1", "input": …, "expected": …}'}</Code>,
+                or add items one by one.
+                {" "}<Code>input</Code> is required; <Code>id</Code>, <Code>expected</Code> and <Code>metadata</Code> are optional.
+              </EmptyState>
+            </Card>
+          )}
+        </>
       ) : (
         <div className="grid gap-6 lg:grid-cols-4">
           <div className="space-y-6">
@@ -85,8 +227,9 @@ function DatasetView() {
               <ul className="divide-y divide-zinc-100">
                 {versions.map((v) => (
                   <li key={v.id}>
-                    <button type="button" onClick={() => selectVersion(v.version)}
-                      className={cx("block w-full px-4 py-2.5 text-left hover:bg-zinc-50", v.id === selected?.id && "bg-brand-50/60")}>
+                    <button type="button" onClick={() => selectVersion(v.version)} disabled={editing}
+                      className={cx("block w-full px-4 py-2.5 text-left hover:bg-zinc-50 disabled:cursor-default disabled:hover:bg-transparent",
+                        v.id === selected?.id && "bg-brand-50/60", editing && v.id !== selected?.id && "opacity-50")}>
                       <div className="flex items-center justify-between">
                         <span className="font-mono text-sm font-medium text-zinc-900">v{v.version}</span>
                         {v.id === latest?.id && <span className="text-xs text-brand-600">latest</span>}
@@ -101,25 +244,36 @@ function DatasetView() {
             <RunSnippet project={project.slug} dataset={dataset.slug} />
           </div>
 
-          <Card className="lg:col-span-3" padded={false}
-            title={selected ? <>Items in <span className="font-mono">v{selected.version}</span></> : "Items"}
-            actions={<span className="text-xs text-zinc-500">Versions are immutable</span>}>
-            {itemsError ? <div className="p-4"><Alert>{errorMessage(itemsError)}</Alert></div>
-              : !items && itemsLoading ? <Loading />
-              : items && (
-                <>
-                  <Table>
-                    <thead className="bg-zinc-50">
-                      <tr><Th className="w-16">#</Th><Th className="w-40">ID</Th><Th>Input</Th><Th>Expected</Th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-100">
-                      {items.items.map((it) => <ItemRow key={it.id} item={it} />)}
-                    </tbody>
-                  </Table>
-                  <Pager offset={offset} total={items.total} page={PAGE} onChange={setOffset} />
-                </>
-              )}
-          </Card>
+          <div className="lg:col-span-3">
+            {addedList}
+            <Card padded={false}
+              title={selected ? <>Items in <span className="font-mono">v{selected.version}</span></> : "Items"}
+              actions={<span className="text-xs text-zinc-500">{editing ? "Click Edit or Remove on a row" : "Versions are immutable"}</span>}>
+              {itemsError ? <div className="p-4"><Alert>{errorMessage(itemsError)}</Alert></div>
+                : !items && itemsLoading ? <Loading />
+                : items && (
+                  <>
+                    <Table>
+                      <thead className="bg-zinc-50">
+                        <tr>
+                          <Th className="w-16">#</Th><Th className="w-40">ID</Th><Th>Input</Th><Th>Expected</Th>
+                          {editing && <Th className="w-36" />}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100">
+                        {items.items.map((it) => (
+                          <ItemRow key={it.id} item={it} editing={editing}
+                            edited={draft.updates[it.id]} removed={draft.removed.includes(it.id)}
+                            onEdit={() => setEditor({ kind: "existing", item: it })}
+                            onToggleRemove={() => toggleRemoved(it.id)} onRevert={() => revert(it.id)} />
+                        ))}
+                      </tbody>
+                    </Table>
+                    <Pager offset={offset} total={items.total} page={PAGE} onChange={setOffset} />
+                  </>
+                )}
+            </Card>
+          </div>
         </div>
       )}
 
@@ -130,34 +284,133 @@ function DatasetView() {
           router.replace(pathname); // show the new latest version
           setUploading(false);
         }} />
+      <ItemModal editor={editor} draft={draft} onClose={() => setEditor(null)} onSave={saveItem} />
     </>
   );
 }
 
-function ItemRow({ item }: { item: DatasetItem }) {
+function ItemRow({ item, editing, edited, removed, onEdit, onToggleRemove, onRevert }: {
+  item: DatasetItem; editing: boolean; edited?: ItemFields; removed: boolean;
+  onEdit: () => void; onToggleRemove: () => void; onRevert: () => void;
+}) {
   const [open, setOpen] = useState(false);
+  const shown = edited ?? fieldsOf(item);
+  const colSpan = editing ? 5 : 4;
   return (
     <Fragment>
-      <tr className={cx("cursor-pointer hover:bg-zinc-50", open && "bg-zinc-50")} onClick={() => setOpen((o) => !o)}>
-        <Td className="text-zinc-500 tabular-nums">{item.position + 1}</Td>
-        <Td className="font-mono text-xs text-zinc-700">{item.externalId ?? <span className="text-zinc-400">—</span>}</Td>
-        <Td className="max-w-md"><span className="line-clamp-2 font-mono text-xs text-zinc-800">{preview(item.input, 160)}</span></Td>
-        <Td className="max-w-xs"><span className="line-clamp-2 font-mono text-xs text-zinc-600">{preview(item.expected, 100)}</span></Td>
+      <tr className={cx("cursor-pointer hover:bg-zinc-50", open && "bg-zinc-50", edited && "bg-amber-50/50", removed && "opacity-50")}
+        onClick={() => setOpen((o) => !o)}>
+        <Td className="text-zinc-500 tabular-nums">
+          {item.position + 1}
+          {edited && <div className="text-[10px] font-medium text-amber-700 uppercase">edited</div>}
+          {removed && <div className="text-[10px] font-medium text-red-700 uppercase">removed</div>}
+        </Td>
+        <Td className={cx("font-mono text-xs text-zinc-700", removed && "line-through")}>{shown.id ?? <span className="text-zinc-400">—</span>}</Td>
+        <Td className="max-w-md"><span className={cx("line-clamp-2 font-mono text-xs text-zinc-800", removed && "line-through")}>{preview(shown.input, 160)}</span></Td>
+        <Td className="max-w-xs"><span className={cx("line-clamp-2 font-mono text-xs text-zinc-600", removed && "line-through")}>{preview(shown.expected, 100)}</span></Td>
+        {editing && (
+          <Td className="text-right whitespace-nowrap">
+            <span onClick={(e) => e.stopPropagation()}>
+              {removed ? <Button size="sm" variant="secondary" onClick={onToggleRemove}>Restore</Button> : (
+                <>
+                  {edited && <><Button size="sm" variant="ghost" onClick={onRevert}>Revert</Button>{" "}</>}
+                  <Button size="sm" variant="secondary" onClick={onEdit}>Edit</Button>{" "}
+                  <Button size="sm" variant="ghost" onClick={onToggleRemove}>Remove</Button>
+                </>
+              )}
+            </span>
+          </Td>
+        )}
       </tr>
       {open && (
         <tr className="bg-zinc-50/60">
-          <td colSpan={4} className="px-4 pt-1 pb-4">
+          <td colSpan={colSpan} className="px-4 pt-1 pb-4">
             <div className="grid gap-4 lg:grid-cols-3">
-              <div><p className="mb-1.5 text-xs font-medium text-zinc-500 uppercase">Input</p><JsonView value={item.input} /></div>
+              <div><p className="mb-1.5 text-xs font-medium text-zinc-500 uppercase">Input</p><JsonView value={shown.input} /></div>
               <div><p className="mb-1.5 text-xs font-medium text-zinc-500 uppercase">Expected</p>
-                {item.expected === null ? <p className="text-sm text-zinc-500">None.</p> : <JsonView value={item.expected} />}</div>
+                {shown.expected === null || shown.expected === undefined ? <p className="text-sm text-zinc-500">None.</p> : <JsonView value={shown.expected} />}</div>
               <div><p className="mb-1.5 text-xs font-medium text-zinc-500 uppercase">Metadata</p>
-                {Object.keys(item.metadata ?? {}).length === 0 ? <p className="text-sm text-zinc-500">None.</p> : <JsonView value={item.metadata} />}</div>
+                {Object.keys(shown.metadata ?? {}).length === 0 ? <p className="text-sm text-zinc-500">None.</p> : <JsonView value={shown.metadata} />}</div>
             </div>
           </td>
         </tr>
       )}
     </Fragment>
+  );
+}
+
+const toText = (v: unknown) => (v === undefined || v === null ? "" : JSON.stringify(v, null, 2));
+
+/** Parses a JSON field of the item form; plain text must be quoted so numbers/objects stay unambiguous. */
+function parseJson(label: string, text: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  try { return { ok: true, value: JSON.parse(text) }; } catch {
+    return { ok: false, error: `${label} is not valid JSON. For plain text, wrap it in quotes: "like this".` };
+  }
+}
+
+function ItemModal({ editor, draft, onClose, onSave }: {
+  editor: ItemEditor | null; draft: Draft; onClose: () => void; onSave: (fields: ItemFields) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const initial: ItemFields | null = !editor ? null
+    : editor.kind === "new" ? { input: undefined }
+    : editor.kind === "added" ? editor.item
+    : draft.updates[editor.item.id] ?? fieldsOf(editor.item);
+  const formKey = !editor ? "closed" : editor.kind === "new" ? "new" : editor.kind === "added" ? editor.item.key : editor.item.id;
+
+  function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = new FormData(e.currentTarget);
+    const id = String(form.get("id") ?? "").trim();
+    const inputText = String(form.get("input") ?? "").trim();
+    const expectedText = String(form.get("expected") ?? "").trim();
+    const metadataText = String(form.get("metadata") ?? "").trim();
+    if (!inputText) { setError("Input is required."); return; }
+    const input = parseJson("Input", inputText);
+    if (!input.ok) { setError(input.error); return; }
+    const expected = expectedText ? parseJson("Expected", expectedText) : { ok: true as const, value: undefined };
+    if (!expected.ok) { setError(expected.error); return; }
+    const metadata = metadataText ? parseJson("Metadata", metadataText) : { ok: true as const, value: {} };
+    if (!metadata.ok) { setError(metadata.error); return; }
+    if (!metadata.value || typeof metadata.value !== "object" || Array.isArray(metadata.value)) {
+      setError("Metadata must be a JSON object, e.g. {\"difficulty\": \"hard\"}.");
+      return;
+    }
+    setError(null);
+    onSave({
+      id: id || undefined, input: input.value, expected: expected.value,
+      metadata: metadata.value as Record<string, unknown>,
+    });
+  }
+
+  function close() { setError(null); onClose(); }
+
+  const title = !editor ? "" : editor.kind === "existing" ? `Edit item ${editor.item.position + 1}` : editor.kind === "added" ? "Edit new item" : "Add item";
+  return (
+    <Modal open={editor !== null} onClose={close} title={title}>
+      {initial && (
+        <form key={formKey} onSubmit={submit} className="space-y-4">
+          {error && <Alert>{error}</Alert>}
+          <Field label="ID" hint="Optional. Your own id for the item, shown in run results.">
+            <Input name="id" maxLength={200} defaultValue={initial.id ?? ""} placeholder="q42" />
+          </Field>
+          <Field label="Input (JSON)" hint="Sent to your app. Wrap plain text in quotes.">
+            <Textarea name="input" rows={6} autoFocus defaultValue={toText(initial.input)} placeholder={'{"question": "What is 2+2?"}'} />
+          </Field>
+          <Field label="Expected (JSON, optional)" hint="Never sent to your app; kept for scoring.">
+            <Textarea name="expected" rows={3} defaultValue={toText(initial.expected)} placeholder={'"4"'} />
+          </Field>
+          <Field label="Metadata (JSON object, optional)">
+            <Textarea name="metadata" rows={2} defaultValue={Object.keys(initial.metadata ?? {}).length ? toText(initial.metadata) : ""}
+              placeholder={'{"difficulty": "easy"}'} />
+          </Field>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={close}>Cancel</Button>
+            <Button type="submit">{editor?.kind === "new" ? "Add to draft" : "Update draft"}</Button>
+          </div>
+        </form>
+      )}
+    </Modal>
   );
 }
 
