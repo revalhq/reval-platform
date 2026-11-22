@@ -12,6 +12,9 @@ const API_URL = (process.env.API_URL ?? "http://localhost:4000").replace(/\/$/, 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // Base URL shown in the docs and "run it from your code" snippets. Defaults to API_URL (the API's
+  // public URL), so a deploy that only sets API_URL doesn't tell clients to use localhost.
+  env: { NEXT_PUBLIC_API_URL: (process.env.NEXT_PUBLIC_API_URL || API_URL).replace(/\/$/, "") },
   // Proxy the portal API through Next.js so the session cookie stays same-origin.
   // beforeFiles: always wins over the /[org] dynamic route.
   async rewrites() {
