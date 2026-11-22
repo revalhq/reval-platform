@@ -1,17 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
-import { useSWRConfig } from "swr";
 import { AuthCard } from "@/components/auth-card";
 import { Alert, Button, Field, Input } from "@/components/ui";
 import { api, errorMessage } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
 export default function RegisterPage() {
-  const router = useRouter();
-  const { mutate } = useSWRConfig();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -32,9 +28,9 @@ export default function RegisterPage() {
           },
         },
       });
-      await mutate("/auth/me", me, { revalidate: false });
       const org = me.organizations[0];
-      router.replace(org ? `/${org.slug}/runs` : "/");
+      // Full page load: the client router may hold redirects to /login cached while logged out.
+      window.location.replace(org ? `/${org.slug}/runs` : "/");
     } catch (err) {
       setError(errorMessage(err));
       setLoading(false);

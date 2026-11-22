@@ -1,18 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { type FormEvent, Suspense, useState } from "react";
-import { useSWRConfig } from "swr";
 import { AuthCard } from "@/components/auth-card";
 import { Alert, Button, Field, Input } from "@/components/ui";
 import { api, errorMessage, safeNext } from "@/lib/api";
-import type { Me } from "@/lib/types";
 
 function LoginForm() {
-  const router = useRouter();
   const params = useSearchParams();
-  const { mutate } = useSWRConfig();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const next = safeNext(params.get("next"));
@@ -23,11 +19,12 @@ function LoginForm() {
     setLoading(true);
     setError(null);
     try {
-      const me = await api<Me>("/auth/login", {
+      await api("/auth/login", {
         body: { json: { email: form.get("email"), password: form.get("password") } },
       });
-      await mutate("/auth/me", me, { revalidate: false });
-      router.replace(next);
+      // Full page load, not router.replace: in production the client router has prefetched links
+      // (e.g. the logo's "/") while logged out, and cached the proxy's redirect back to /login.
+      window.location.replace(next);
     } catch (err) {
       setError(errorMessage(err));
       setLoading(false);
