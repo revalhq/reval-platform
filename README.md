@@ -225,6 +225,7 @@ slug, matching the links the API hands out (`/{org}/runs/{number}`, Stripe's `/{
 - `/{org}/projects` → `/{org}/projects/{project}` (datasets, saved variants) → `/{org}/projects/{project}/datasets/{dataset}`
   (upload JSONL, browse versions, edit items: changes are kept as a draft and saved as a new version)
 - `/{org}/settings` – general, members, API keys (secret shown once), billing
+- `/{org}/docs` – user guide: install a client, set up projects/datasets, solvers, variants, usage metadata, HTTP protocol
 
 `src/proxy.ts` redirects visitors without a session cookie to `/login`; the API remains the authority
 (any 401 from it sends the browser to `/login?next=…`). Org slugs that would shadow portal pages

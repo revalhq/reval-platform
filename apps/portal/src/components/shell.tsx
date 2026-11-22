@@ -96,6 +96,7 @@ export function TopBar({ me, org }: { me: Me; org?: OrgSummary }) {
   const nav = org ? [
     { label: "Runs", href: `/${org.slug}/runs` },
     { label: "Projects", href: `/${org.slug}/projects` },
+    { label: "Docs", href: `/${org.slug}/docs` },
     { label: "Settings", href: `/${org.slug}/settings` },
   ] : [];
   return (
