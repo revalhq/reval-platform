@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE } from "@/lib/session";
 
-// Must match SESSION_COOKIE in apps/api/src/plugins/auth.ts.
-const SESSION_COOKIE = "rv_session";
-const PUBLIC_PAGES = ["/login", "/register"];
+/** "/" is the public landing page when signed out (see src/app/page.tsx). */
+const PUBLIC_PAGES = ["/", "/login", "/register"];
 /** Path prefixes readable without signing in (the prefix itself and anything below it). */
 const PUBLIC_PREFIXES = ["/docs"];
 
@@ -19,7 +19,7 @@ export function proxy(req: NextRequest) {
   if (!hasSession && !isPublic) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
-    url.search = pathname === "/" ? "" : `?next=${encodeURIComponent(pathname + search)}`;
+    url.search = `?next=${encodeURIComponent(pathname + search)}`;
     return NextResponse.redirect(url);
   }
   return NextResponse.next();
