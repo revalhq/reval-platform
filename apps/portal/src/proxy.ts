@@ -3,6 +3,8 @@ import { type NextRequest, NextResponse } from "next/server";
 // Must match SESSION_COOKIE in apps/api/src/plugins/auth.ts.
 const SESSION_COOKIE = "rv_session";
 const PUBLIC_PAGES = ["/login", "/register"];
+/** Path prefixes readable without signing in (the prefix itself and anything below it). */
+const PUBLIC_PREFIXES = ["/docs"];
 
 /**
  * Cheap gate based on cookie presence only; the API is the real authority. An expired
@@ -11,7 +13,8 @@ const PUBLIC_PAGES = ["/login", "/register"];
 export function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
   const hasSession = Boolean(req.cookies.get(SESSION_COOKIE)?.value);
-  const isPublic = PUBLIC_PAGES.includes(pathname);
+  const isPublic = PUBLIC_PAGES.includes(pathname)
+    || PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   if (!hasSession && !isPublic) {
     const url = req.nextUrl.clone();

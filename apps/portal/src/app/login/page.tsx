@@ -35,7 +35,7 @@ function LoginForm() {
     <AuthCard
       title="Log in"
       subtitle="Welcome back."
-      footer={<>No account yet? <Link href="/register" className="font-medium text-brand-600 hover:text-brand-700">Create one</Link></>}
+      footer={<>No account yet? <Link href="/register" className="font-medium text-brand-600 hover:text-brand-700">Create one</Link> · <Link href="/docs" className="font-medium text-brand-600 hover:text-brand-700">Read the docs</Link></>}
     >
       <form onSubmit={onSubmit} className="space-y-4">
         {error && <Alert>{error}</Alert>}
