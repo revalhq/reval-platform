@@ -14,9 +14,27 @@ export default async function Home() {
 // ------------------------------------------------------------------ content
 
 const STEPS = [
-  ["Upload a dataset", "Add inputs and expected answers in the portal. Versions are immutable, so every run is reproducible."],
+  ["Design your dataset with us", "Our evaluation experts help you build focused datasets and the right variants to test. Every version is locked, so each run can be repeated exactly."],
   ["Run against your app", "A small client package fetches tasks, calls your app in your own environment and sends the outputs back."],
-  ["Compare the results", "Watch runs live and compare variants side by side: outputs, errors, latency, tokens and cost."],
+  ["Compare the results", "Watch runs live and compare variants side by side: outputs, errors, latency, tokens and cost. We help you turn them into a clear decision."],
+];
+
+const EXPERTISE: { title: string; body: string; icon: ReactNode }[] = [
+  {
+    title: "Datasets that find real problems",
+    body: "We help you choose test cases that reflect your real traffic, edge cases and known failure modes, not just the easy path.",
+    icon: <path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7" />,
+  },
+  {
+    title: "Variants worth comparing",
+    body: "We help you decide which models, prompts and settings to put side by side, so every run answers a real question.",
+    icon: <path d="M4 19V9m6 10V5m6 14v-7m4 7H2" />,
+  },
+  {
+    title: "A report you can act on",
+    body: "We go through the results with you and turn them into a clear recommendation on quality, speed and cost.",
+    icon: <path d="M9 12l2 2 4-4M7 3h10a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z" />,
+  },
 ];
 
 const FEATURES: { title: string; body: string; tone: string; icon: ReactNode }[] = [
@@ -181,7 +199,7 @@ function Landing() {
             <div>
               <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-brand-100 ring-1 ring-white/15 backdrop-blur">
                 <span className="size-1.5 rounded-full bg-cyan-400 motion-safe:animate-glow" />
-                Evaluation for AI-powered apps
+                Evaluation platform + expert guidance
               </span>
               <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">
                 Know how your AI app performs{" "}
@@ -190,8 +208,8 @@ function Landing() {
                 </span>
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-relaxed text-zinc-300">
-                Run your datasets against the app you already have, in your own environment. Compare models,
-                prompts and settings side by side, and keep every output, latency and cost figure in one place.
+                Reval is more than a tool. Our evaluation experts help you build the right datasets, choose the
+                variants to compare and understand the results, while your app keeps running in your own environment.
               </p>
               <div className="mt-9 flex flex-wrap gap-3">
                 <Link href="/register"
@@ -235,6 +253,42 @@ function Landing() {
           </ol>
         </section>
 
+        {/* Expertise */}
+        <section className="relative isolate overflow-hidden bg-[#0b0b1f] text-white">
+          <div className="pointer-events-none absolute -top-32 left-1/4 -z-10 size-[30rem] rounded-full bg-brand-600/30 blur-3xl" />
+          <div className="pointer-events-none absolute -right-24 bottom-[-10rem] -z-10 size-[26rem] rounded-full bg-fuchsia-600/25 blur-3xl" />
+          <div className="mx-auto grid max-w-7xl grid-cols-1 gap-12 px-4 py-24 sm:px-6 lg:grid-cols-2 lg:items-center">
+            <div>
+              <p className="text-sm font-semibold text-cyan-300">Expertise included</p>
+              <h2 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
+                You don&apos;t just get a tool.{" "}
+                <span className="bg-gradient-to-r from-indigo-300 via-fuchsia-300 to-cyan-300 bg-clip-text text-transparent">
+                  You get an evaluation team.
+                </span>
+              </h2>
+              <p className="mt-5 max-w-xl text-lg leading-relaxed text-zinc-300">
+                A good evaluation depends on asking the right questions. Our specialists work with you from the first
+                dataset to the final report, so you know which variant to ship and why.
+              </p>
+            </div>
+            <ul className="space-y-4">
+              {EXPERTISE.map((e) => (
+                <li key={e.title} className="flex gap-4 rounded-2xl bg-white/5 p-5 ring-1 ring-white/10 backdrop-blur">
+                  <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-fuchsia-500 shadow-lg shadow-fuchsia-500/30">
+                    <svg viewBox="0 0 24 24" className="size-5 text-white" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      {e.icon}
+                    </svg>
+                  </span>
+                  <div>
+                    <h3 className="font-semibold">{e.title}</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-zinc-300">{e.body}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
         {/* Features */}
         <section className="relative isolate overflow-hidden border-y border-zinc-200 bg-white">
           <div className="pointer-events-none absolute -top-24 right-0 -z-10 size-96 rounded-full bg-fuchsia-100 blur-3xl" />
@@ -263,7 +317,7 @@ function Landing() {
           <div className="relative isolate overflow-hidden rounded-3xl bg-gradient-to-br from-brand-600 via-violet-600 to-fuchsia-600 px-6 py-16 text-center shadow-2xl shadow-brand-600/30 sm:px-12">
             <NeuralNet className="pointer-events-none absolute inset-0 -z-10 h-full w-full opacity-30" />
             <h2 className="text-3xl font-semibold tracking-tight text-white">Run your first evaluation today</h2>
-            <p className="mx-auto mt-3 max-w-xl text-brand-100">Create an organization, upload a dataset and point a client at your app.</p>
+            <p className="mx-auto mt-3 max-w-xl text-brand-100">Create an organization and our team will help you design your first dataset, choose your variants and read the results.</p>
             <div className="mt-8 flex flex-wrap justify-center gap-3">
               <Link href="/register" className="rounded-lg bg-white px-5 py-3 text-sm font-semibold text-brand-700 shadow-lg transition hover:bg-brand-50">Get started</Link>
               <Link href="/docs" className="rounded-lg px-5 py-3 text-sm font-semibold text-white ring-1 ring-white/40 transition hover:bg-white/10">Read the docs →</Link>
